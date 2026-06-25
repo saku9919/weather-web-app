@@ -5,6 +5,25 @@ import { extractHourlyPoints } from '../utils/weatherUtils';
 
 const API_KEY = import.meta.env.VITE_WEATHER_API_KEY;
 const BASE_URL = 'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline';
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5分間キャッシュ
+
+// シンプルなインメモリキャッシュ
+interface CacheEntry {
+  data: WeatherData;
+  displayName: string;
+  timestamp: number;
+}
+const cache = new Map<string, CacheEntry>();
+
+function getCached(key: string): CacheEntry | null {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
+    cache.delete(key);
+    return null;
+  }
+  return entry;
+}
 
 interface UseWeatherReturn {
   data: WeatherData | null;
@@ -75,6 +94,14 @@ export function useWeather(): UseWeatherReturn {
       // 日本語・任意の地名 → Nominatim で緯度経度・表示名に正規化
       const { coords: resolvedQuery, displayName } = await geocodeQuery(query);
 
+      // キャッシュチェック（同じ場所を5分以内に再取得しない）
+      const cached = getCached(resolvedQuery);
+      if (cached) {
+        setData(cached.data);
+        setLocation(cached.displayName);
+        setLoading(false);
+        return;
+      }
       // 過去1日 + 今後1日分 取得するため、昨日〜明日の期間を指定
       const now = new Date();
       const yesterday = new Date(now);
@@ -141,13 +168,18 @@ export function useWeather(): UseWeatherReturn {
 
       setData(weatherData);
       // Nominatim の表示名を優先し、なければ Visual Crossing の resolvedAddress を使用
-      setLocation(displayName || raw.resolvedAddress || query);
+      const finalDisplayName = displayName || raw.resolvedAddress || query;
+      setLocation(finalDisplayName);
+      // キャッシュに保存
+      cache.set(resolvedQuery, { data: weatherData, displayName: finalDisplayName, timestamp: Date.now() });
     } catch (err) {
       if (axios.isAxiosError(err)) {
         if (err.response?.status === 400) {
           setError('場所が見つかりませんでした。別の場所名を試してください。');
         } else if (err.response?.status === 401) {
           setError('APIキーが無効です。正しいAPIキーを設定してください。');
+        } else if (err.response?.status === 429) {
+          setError('APIのリクエスト制限に達しました。しばらく待ってから再試行してください（無料プランは1日1000レコードまで）。');
         } else {
           setError(`天気データの取得に失敗しました: ${err.message}`);
         }
