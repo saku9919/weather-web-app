@@ -1,5 +1,10 @@
 # React + TypeScript + Vite
 
+## Project
+
+This project is based on the following roadmap.sh project:
+https://roadmap.sh/projects/weather-app
+
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
 Currently, two official plugins are available:
